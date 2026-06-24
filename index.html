@@ -3,38 +3,187 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>anonymousPulse // Intelligent Mobile Mashup Grid</title>
+    <title>anonymousPulse // Hardware Sync Remix</title>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-neutral-950 text-neutral-200 min-h-screen flex flex-col items-center justify-center p-4">
 
-    <div class="w-full max-w-2xl bg-neutral-900 border border-neutral-800 rounded-3xl p-6 shadow-2xl space-y-6">
+    <div class="w-full max-w-xl bg-neutral-900 border border-neutral-800 rounded-2xl p-5 shadow-2xl space-y-4">
         
-        <div class="flex justify-between items-center border-b border-neutral-800 pb-4">
-            <div>
-                <h1 class="text-2xl font-black tracking-widest bg-gradient-to-r from-cyan-400 to-fuchsia-500 bg-clip-text text-transparent">PULSE_ADVANCED_DSP</h1>
-                <p class="text-xs text-neutral-500 mt-0.5">Transient-Aligned Automated Remix Matrix</p>
-            </div>
-            <div class="h-2 w-24 bg-neutral-950 rounded-full overflow-hidden relative border border-neutral-800">
-                <div id="visualizerBar" class="h-full bg-cyan-400 w-0 transition-all duration-100"></div>
-            </div>
+        <div class="text-center border-b border-neutral-800 pb-3">
+            <h1 class="text-xl font-black tracking-widest text-cyan-400">PULSE_HARDWARE_SYNC</h1>
+            <p class="text-[10px] text-neutral-500 uppercase tracking-wider">Event-Driven Mobile Mixer Engine</p>
         </div>
 
-        <div class="flex flex-col items-center justify-center border-2 border-dashed border-neutral-700 hover:border-cyan-500/50 rounded-xl p-6 transition cursor-pointer relative bg-neutral-950 group">
+        <div class="flex flex-col items-center justify-center border border-dashed border-neutral-700 rounded-xl p-4 bg-neutral-950 relative">
             <input type="file" id="audioSources" accept="audio/*" multiple class="absolute inset-0 opacity-0 cursor-pointer" />
-            <span class="text-sm text-neutral-400 group-hover:text-cyan-400 transition text-center" id="uploadStatus">
-                Tap here to select your tracks from your phone
+            <span class="text-xs text-neutral-400 text-center" id="uploadStatus">
+                Tap to load your tracks from storage
             </span>
         </div>
 
-        <div class="space-y-2">
-            <h3 class="text-xs font-bold uppercase tracking-wider text-neutral-500 px-1">Analyzed Audio Matrix</h3>
-            <ul id="matrixList" class="bg-black/50 border border-neutral-800/80 rounded-xl p-3 text-xs space-y-1.5 max-h-36 overflow-y-auto font-mono">
-                <li class="text-neutral-600">Awaiting audio components...</li>
+        <div class="space-y-1">
+            <span class="text-[10px] font-bold text-neutral-500 uppercase tracking-wider block px-1">Analyzed Array</span>
+            <ul id="matrixList" class="bg-black/50 border border-neutral-800 rounded-xl p-2.5 text-[11px] space-y-1 max-h-28 overflow-y-auto font-mono">
+                <li class="text-neutral-600">Awaiting audio assets...</li>
             </ul>
         </div>
 
-        <div class="bg-neutral-950 border border-neutral-800 p-4 rounded-xl grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div class="bg-neutral-950 border border-neutral-800 p-3 rounded-xl flex gap-2">
+            <button id="startRemixBtn" disabled class="flex-grow py-3 bg-cyan-500 text-black font-bold text-xs uppercase tracking-wider rounded-lg disabled:opacity-20">
+                Start Mobile Remix
+            </button>
+            <button id="haltBtn" disabled class="px-5 py-3 bg-neutral-800 text-neutral-400 font-bold text-xs uppercase rounded-lg">
+                Stop
+            </button>
+        </div>
+
+        <div class="bg-black/80 border border-neutral-800 p-2.5 rounded-lg font-mono text-[10px] text-neutral-400 h-24 overflow-y-auto" id="terminal">
+            🟩 Hardware sync sequence calibrated.
+        </div>
+    </div>
+
+    <script>
+        let audioCtx;
+        let trackDatabase = [];
+        let currentActiveSource = null;
+        let isPlaying = false;
+        const sliceLen = 3.5; // Each slice duration in seconds
+
+        const fileInput = document.getElementById('audioSources');
+        const uploadStatus = document.getElementById('uploadStatus');
+        const matrixList = document.getElementById('matrixList');
+        const startRemixBtn = document.getElementById('startRemixBtn');
+        const haltBtn = document.getElementById('haltBtn');
+        const terminal = document.getElementById('terminal');
+
+        function printLog(msg) {
+            terminal.innerHTML += `<br>▪ ${msg}`;
+            terminal.scrollTop = terminal.scrollHeight;
+        }
+
+        function initAudio() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+        }
+
+        // Divide the track into stable chunk arrays
+        function sliceTrackTimeline(audioBuffer) {
+            const duration = audioBuffer.duration;
+            let points = [];
+            for (let time = 1; time < duration - (sliceLen + 2); time += sliceLen) {
+                points.push(time);
+            }
+            return points.length > 0 ? points : [0];
+        }
+
+        fileInput.addEventListener('change', async (e) => {
+            initAudio();
+            const files = Array.from(e.target.files);
+            if (files.length === 0) return;
+
+            uploadStatus.textContent = `${files.length} Tracks Selected`;
+            matrixList.innerHTML = "";
+            trackDatabase = [];
+
+            for (let i = 0; i < files.length; i++) {
+                const file = files[i];
+                matrixList.innerHTML += `<li id="meta-${i}" class="text-amber-500">⏳ Parsing track [${i+1}/${files.length}]...</li>`;
+                
+                try {
+                    const arrayBuffer = await file.arrayBuffer();
+                    const decodedBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+                    const slicePoints = sliceTrackTimeline(decodedBuffer);
+
+                    trackDatabase.push({
+                        name: file.name || `Track-${i+1}`,
+                        buffer: decodedBuffer,
+                        slices: slicePoints
+                    });
+
+                    document.getElementById(`meta-${i}`).className = "text-emerald-400";
+                    document.getElementById(`meta-${i}`).textContent = `✅ Locked: ${file.name.substring(0,18)}...`;
+                } catch (err) {
+                    document.getElementById(`meta-${i}`).className = "text-red-500";
+                    document.getElementById(`meta-${i}`).textContent = `❌ Decode Fail`;
+                }
+            }
+
+            if (trackDatabase.length >= 1) {
+                startRemixBtn.disabled = false;
+                printLog("System stable. Hardware listeners armed.");
+            }
+        });
+
+        // The core fix: Event-driven calculation instead of timers
+        function triggerNextHardwareSlice() {
+            if (!isPlaying || trackDatabase.length === 0) return;
+
+            // Pick a completely random track
+            const randomTrackIdx = Math.floor(Math.random() * trackDatabase.length);
+            const track = trackDatabase[randomTrackIdx];
+
+            // Pick a random pre-calculated slice slice position
+            const randomSliceIdx = Math.floor(Math.random() * track.slices.length);
+            const startTimeOffset = track.slices[randomSliceIdx];
+
+            // Build audio nodes
+            const source = audioCtx.createBufferSource();
+            source.buffer = track.buffer;
+
+            const gainNode = audioCtx.createGain();
+            
+            // Apply quick click prevention fades
+            const now = audioCtx.currentTime;
+            gainNode.gain.setValueAtTime(0, now);
+            gainNode.gain.linearRampToValueAtTime(1, now + 0.04); 
+            gainNode.gain.setValueAtTime(1, now + sliceLen - 0.04);
+            gainNode.gain.linearRampToValueAtTime(0, now + sliceLen);
+
+            source.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+
+            // Execute current slice
+            source.start(now, startTimeOffset, sliceLen);
+            currentActiveSource = source;
+
+            printLog(`Playing Slice from Track ${randomTrackIdx + 1} at point ${Math.round(startTimeOffset)}s`);
+
+            // CRUCIAL FIX: Phone browser cannot sleep or pause this. 
+            // When the audio chip finishes playing this slice, it immediately jumps to the next line.
+            source.onended = () => {
+                if (isPlaying) {
+                    triggerNextHardwareSlice(); 
+                }
+            };
+        }
+
+        startRemixBtn.addEventListener('click', () => {
+            initAudio();
+            if (trackDatabase.length === 0) return;
+            
+            isPlaying = true;
+            startRemixBtn.disabled = true;
+            haltBtn.disabled = false;
+            
+            printLog("Starting continuous live remix stream...");
+            triggerNextHardwareSlice();
+        });
+
+        haltBtn.addEventListener('click', () => {
+            isPlaying = false;
+            if (currentActiveSource) {
+                try { currentActiveSource.stop(); } catch(e){}
+                currentActiveSource = null;
+            }
+            printLog("Remix sequence terminated.");
+            startRemixBtn.disabled = false;
+            haltBtn.disabled = true;
+        });
+    </script>
+</body>
+</html>        <div class="bg-neutral-950 border border-neutral-800 p-4 rounded-xl grid grid-cols-1 md:grid-cols-2 gap-4">
             <div class="space-y-2">
                 <div class="flex justify-between text-xs font-bold text-neutral-400">
                     <span>MASTER TEMPO (SPEED)</span>
