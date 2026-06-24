@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>anonymousPulse // Intelligent Mashup Grid</title>
+    <title>anonymousPulse // Intelligent Mobile Mashup Grid</title>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-neutral-950 text-neutral-200 min-h-screen flex flex-col items-center justify-center p-4">
@@ -21,9 +21,9 @@
         </div>
 
         <div class="flex flex-col items-center justify-center border-2 border-dashed border-neutral-700 hover:border-cyan-500/50 rounded-xl p-6 transition cursor-pointer relative bg-neutral-950 group">
-            <input type="file" id="audioSources" accept="audio/mp3" multiple class="absolute inset-0 opacity-0 cursor-pointer" />
+            <input type="file" id="audioSources" accept="audio/*" multiple class="absolute inset-0 opacity-0 cursor-pointer" />
             <span class="text-sm text-neutral-400 group-hover:text-cyan-400 transition text-center" id="uploadStatus">
-                Drop multiple tracks here (Mixes slow/fast songs automatically)
+                Tap here to select your tracks from your phone
             </span>
         </div>
 
@@ -65,17 +65,13 @@
     </div>
 
     <script>
-        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        let audioCtx;
         
         let trackDatabase = [];
         let executionPipeline = [];
         let processTimeoutId = null;
-
-        // Connect a global analyzer node for UI feedback
-        const globalAnalyzer = audioCtx.createAnalyser();
-        globalAnalyzer.fftSize = 32;
-        globalAnalyzer.connect(audioCtx.destination);
-        const dataArray = new Uint8Array(globalAnalyzer.frequencyBinCount);
+        let globalAnalyzer;
+        let dataArray;
 
         const fileInput = document.getElementById('audioSources');
         const uploadStatus = document.getElementById('uploadStatus');
@@ -92,16 +88,26 @@
             terminal.scrollTop = terminal.scrollHeight;
         }
 
+        // Initialize Audio Engine on first interaction to comply with strict mobile browser security policies
+        function initAudioEngine() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                globalAnalyzer = audioCtx.createAnalyser();
+                globalAnalyzer.fftSize = 32;
+                globalAnalyzer.connect(audioCtx.destination);
+                dataArray = new Uint8Array(globalAnalyzer.frequencyBinCount);
+            }
+        }
+
         speedSlider.addEventListener('input', (e) => {
             speedVal.textContent = `${parseFloat(e.target.value).toFixed(2)}x Speed`;
         });
 
         // 1. EXTRACT SOUND TRANSIENTS & ESTIMATE BASELINE CHARACTERISTICS
         function analyzeTrackTransients(audioBuffer) {
-            const rawChannelData = audioBuffer.getChannelData(0); // Analyze left channel
+            const rawChannelData = audioBuffer.getChannelData(0); 
             const sampleRate = audioBuffer.sampleRate;
             
-            // Look for sudden volume spikes across chunks of audio
             const step = Math.floor(sampleRate * 0.05); // 50ms blocks
             let energyPeaks = [];
 
@@ -110,52 +116,53 @@
                 for (let j = 0; j < step && (i + j) < rawChannelData.length; j++) {
                     sum += rawChannelData[i + j] * rawChannelData[i + j];
                 }
-                let rms = Math.sqrt(sum / step); // Root Mean Square represents perceived volume
-                if (rms > 0.15) { 
-                    energyPeaks.push(i / sampleRate); // Save time coordinate of the volume spike
+                let rms = Math.sqrt(sum / step); 
+                if (rms > 0.12) { // Slightly optimized threshold for versatile music file types
+                    energyPeaks.push(i / sampleRate); 
                 }
             }
-            // Return valid anchor timestamps or fall back to linear grid values if track is silent
             return energyPeaks.length > 5 ? energyPeaks : [2, 4, 6, 8, 10, 12, 14, 16];
         }
 
         // 2. FILE INPUT HANDLING & PCM DECODING
         fileInput.addEventListener('change', async (e) => {
+            initAudioEngine(); // Fire up engine context safely
+            
             const files = Array.from(e.target.files);
             if (files.length === 0) return;
 
-            uploadStatus.textContent = `${files.length} System Audio Nodes Ingested`;
+            uploadStatus.textContent = `${files.length} Audio Files Picked`;
             matrixList.innerHTML = "";
             trackDatabase = [];
 
             for (let i = 0; i < files.length; i++) {
                 const file = files[i];
-                matrixList.innerHTML += `<li id="meta-${i}" class="text-amber-500 animate-pulse">⚡ Scanning data array [${i+1}/${files.length}]...</li>`;
+                const safeName = file.name || `Track-${i+1}`;
+                matrixList.innerHTML += `<li id="meta-${i}" class="text-amber-500 animate-pulse">⚡ Scanning mobile data stream [${i+1}/${files.length}]...</li>`;
                 
                 try {
                     const arrayBuffer = await file.arrayBuffer();
                     const decodedBuffer = await audioCtx.decodeAudioData(arrayBuffer);
-                    
-                    // Run our transient extraction function
                     const structuralPeaks = analyzeTrackTransients(decodedBuffer);
 
                     trackDatabase.push({
-                        name: file.name,
+                        name: safeName,
                         buffer: decodedBuffer,
                         peaks: structuralPeaks
                     });
 
                     document.getElementById(`meta-${i}`).className = "text-cyan-400";
-                    document.getElementById(`meta-${i}`).textContent = `🧬 [SYNC READY] ${file.name} (${structuralPeaks.length} Transients Tracked)`;
+                    document.getElementById(`meta-${i}`).textContent = `🧬 [READY] ${safeName.substring(0, 25)}... (${structuralPeaks.length} beats locked)`;
                 } catch (err) {
                     document.getElementById(`meta-${i}`).className = "text-red-500";
-                    document.getElementById(`meta-${i}`).textContent = `❌ Corruption Fault: ${file.name}`;
+                    document.getElementById(`meta-${i}`).textContent = `❌ Format Error: Could not decode data`;
+                    printLog(`Decoding failure: Ensure file is not encrypted by a streaming app.`);
                 }
             }
 
             if (trackDatabase.length >= 1) {
                 startRemixBtn.disabled = false;
-                printLog("Audio analysis complete. Slices are aligned to their native rhythms.");
+                printLog("Audio analysis complete. Mobile files mapped safely.");
             }
         });
 
@@ -163,31 +170,83 @@
         function executeNextMashupSlice(nextTriggerTime) {
             const baseSliceDuration = 4.0; 
             const currentGlobalSpeed = parseFloat(speedSlider.value);
-            
-            // Adjust how long the slice runs based on the playback speed configuration
             const adjustedSliceDuration = baseSliceDuration / currentGlobalSpeed;
 
-            // Pick a random track from your loaded project database
             const randomTrackIndex = Math.floor(Math.random() * trackDatabase.length);
             const activeTrack = trackDatabase[randomTrackIndex];
 
-            // Pick a random detected transient peak from the song to start our slice on
             const randomPeakIndex = Math.floor(Math.random() * (activeTrack.peaks.length - 2));
             const targetedStartOffset = activeTrack.peaks[randomPeakIndex];
 
-            // Construct Web Audio Node network
             const source = audioCtx.createBufferSource();
             source.buffer = activeTrack.buffer;
-            
-            // Apply real-time speed adjustment to ensure seamless sync
             source.playbackRate.setValueAtTime(currentGlobalSpeed, nextTriggerTime);
 
             const gainNode = audioCtx.createGain();
             
-            // Smart Crossfading (Eliminates clicks, pops, and sudden gaps between varying songs)
+            // Mobile optimized click prevention envelope
             gainNode.gain.setValueAtTime(0, nextTriggerTime);
-            gainNode.gain.linearRampToValueAtTime(1, nextTriggerTime + 0.08); // 80ms fade in
+            gainNode.gain.linearRampToValueAtTime(1, nextTriggerTime + 0.08); 
             gainNode.gain.setValueAtTime(1, nextTriggerTime + adjustedSliceDuration - 0.08);
+            gainNode.gain.linearRampToValueAtTime(0, nextTriggerTime + adjustedSliceDuration); 
+
+            source.connect(gainNode);
+            gainNode.connect(globalAnalyzer);
+
+            source.start(nextTriggerTime, targetedStartOffset, adjustedSliceDuration);
+            executionPipeline.push(source);
+
+            printLog(`Chop active // Track [${randomTrackIndex + 1}] at offset: ${targetedStartOffset.toFixed(1)}s`);
+
+            const timingCheckpoint = nextTriggerTime + adjustedSliceDuration;
+            const schedulerInterval = (timingCheckpoint - audioCtx.currentTime - 0.4) * 1000;
+
+            processTimeoutId = setTimeout(() => {
+                executeNextMashupSlice(timingCheckpoint);
+            }, Math.max(0, schedulerInterval));
+        }
+
+        // 4. ENGINE RUNTIME INTERFACES
+        startRemixBtn.addEventListener('click', () => {
+            initAudioEngine();
+            if (trackDatabase.length === 0) return;
+            printLog("Initializing mobile audio mixer loop...");
+            
+            startRemixBtn.disabled = true;
+            haltBtn.disabled = false;
+            
+            executeNextMashupSlice(audioCtx.currentTime + 0.05);
+            updateVisualizerLoop();
+        });
+
+        function killMixPipeline() {
+            clearTimeout(processTimeoutId);
+            executionPipeline.forEach(node => { try { node.stop(); } catch(e){} });
+            executionPipeline = [];
+        }
+
+        haltBtn.addEventListener('click', () => {
+            killMixPipeline();
+            printLog("Mashup sequencer safely stopped.");
+            startRemixBtn.disabled = false;
+            haltBtn.disabled = true;
+            visualizerBar.style.width = "0%";
+        });
+
+        function updateVisualizerLoop() {
+            if (executionPipeline.length === 0) return;
+            globalAnalyzer.getByteFrequencyData(dataArray);
+            
+            let volumeSum = 0;
+            for(let i=0; i<8; i++) { volumeSum += dataArray[i]; }
+            let averageVolume = volumeSum / 8;
+            
+            visualizerBar.style.width = `${(averageVolume / 255) * 100}%`;
+            requestAnimationFrame(updateVisualizerLoop);
+        }
+    </script>
+</body>
+</html>alueAtTime(1, nextTriggerTime + adjustedSliceDuration - 0.08);
             gainNode.gain.linearRampToValueAtTime(0, nextTriggerTime + adjustedSliceDuration); // 80ms fade out
 
             // Route audio path: Source -> Gain Node -> Global System Analyzer -> Output
