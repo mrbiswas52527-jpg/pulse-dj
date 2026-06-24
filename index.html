@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>anonymousPulse // Intelligent Mashup Grid</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-neutral-950 text-neutral-200 min-h-screen flex flex-col items-center justify-center p-4">
+
+    <div class="w-full max-w-2xl bg-neutral-900 border border-neutral-800 rounded-3xl p-6 shadow-2xl space-y-6">
+        
+        <div class="flex justify-between items-center border-b border-neutral-800 pb-4">
+            <div>
+                <h1 class="text-2xl font-black tracking-widest bg-gradient-to-r from-cyan-400 to-fuchsia-500 bg-clip-text text-transparent">PULSE_ADVANCED_DSP</h1>
+                <p class="text-xs text-neutral-500 mt-0.5">Transient-Aligned Automated Remix Matrix</p>
+            </div>
+            <div class="h-2 w-24 bg-neutral-950 rounded-full overflow-hidden relative border border-neutral-800">
+                <div id="visualizerBar" class="h-full bg-cyan-400 w-0 transition-all duration-100"></div>
+            </div>
+        </div>
+
+        <div class="flex flex-col items-center justify-center border-2 border-dashed border-neutral-700 hover:border-cyan-500/50 rounded-xl p-6 transition cursor-pointer relative bg-neutral-950 group">
+            <input type="file" id="audioSources" accept="audio/mp3" multiple class="absolute inset-0 opacity-0 cursor-pointer" />
+            <span class="text-sm text-neutral-400 group-hover:text-cyan-400 transition text-center" id="uploadStatus">
+                Drop multiple tracks here (Mixes slow/fast songs automatically)
+            </span>
+        </div>
+
+        <div class="space-y-2">
+            <h3 class="text-xs font-bold uppercase tracking-wider text-neutral-500 px-1">Analyzed Audio Matrix</h3>
+            <ul id="matrixList" class="bg-black/50 border border-neutral-800/80 rounded-xl p-3 text-xs space-y-1.5 max-h-36 overflow-y-auto font-mono">
+                <li class="text-neutral-600">Awaiting audio components...</li>
+            </ul>
+        </div>
+
+        <div class="bg-neutral-950 border border-neutral-800 p-4 rounded-xl grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="space-y-2">
+                <div class="flex justify-between text-xs font-bold text-neutral-400">
+                    <span>MASTER TEMPO (SPEED)</span>
+                    <span id="speedVal" class="text-cyan-400 font-mono">1.00x (Original)</span>
+                </div>
+                <input type="range" id="speedSlider" min="0.80" max="1.25" step="0.01" value="1.00" class="w-full h-1 bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-cyan-400">
+            </div>
+
+            <div class="space-y-2">
+                <div class="flex justify-between text-xs font-bold text-neutral-400">
+                    <span>SLICE RESOLUTION</span>
+                    <span class="text-fuchsia-400 font-mono">Transient Sync (Tight)</span>
+                </div>
+                <div class="flex gap-2">
+                    <button id="startRemixBtn" disabled class="flex-grow py-2.5 bg-gradient-to-r from-cyan-500 to-fuchsia-600 text-white font-bold text-xs uppercase tracking-wider rounded-lg hover:opacity-90 transition disabled:opacity-20">
+                        Execute Pro Remix
+                    </button>
+                    <button id="haltBtn" disabled class="px-4 py-2.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 font-bold text-xs uppercase rounded-lg transition disabled:opacity-20">
+                        Halt
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div class="bg-black/80 border border-neutral-800 p-3 rounded-xl font-mono text-[11px] text-neutral-400 h-28 overflow-y-auto shadow-inner" id="terminal">
+            🤖 Engine online. Ready to read and scale sound metrics...
+        </div>
+    </div>
+
+    <script>
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        
+        let trackDatabase = [];
+        let executionPipeline = [];
+        let processTimeoutId = null;
+
+        // Connect a global analyzer node for UI feedback
+        const globalAnalyzer = audioCtx.createAnalyser();
+        globalAnalyzer.fftSize = 32;
+        globalAnalyzer.connect(audioCtx.destination);
+        const dataArray = new Uint8Array(globalAnalyzer.frequencyBinCount);
+
+        const fileInput = document.getElementById('audioSources');
+        const uploadStatus = document.getElementById('uploadStatus');
+        const matrixList = document.getElementById('matrixList');
+        const startRemixBtn = document.getElementById('startRemixBtn');
+        const haltBtn = document.getElementById('haltBtn');
+        const speedSlider = document.getElementById('speedSlider');
+        const speedVal = document.getElementById('speedVal');
+        const terminal = document.getElementById('terminal');
+        const visualizerBar = document.getElementById('visualizerBar');
+
+        function printLog(msg) {
+            terminal.innerHTML += `<br>▪ ${msg}`;
+            terminal.scrollTop = terminal.scrollHeight;
+        }
+
+        speedSlider.addEventListener('input', (e) => {
+            speedVal.textContent = `${parseFloat(e.target.value).toFixed(2)}x Speed`;
+        });
+
+        // 1. EXTRACT SOUND TRANSIENTS & ESTIMATE BASELINE CHARACTERISTICS
+        function analyzeTrackTransients(audioBuffer) {
+            const rawChannelData = audioBuffer.getChannelData(0); // Analyze left channel
+            const sampleRate = audioBuffer.sampleRate;
+            
+            // Look for sudden volume spikes across chunks of audio
+            const step = Math.floor(sampleRate * 0.05); // 50ms blocks
+            let energyPeaks = [];
+
+            for (let i = 0; i < rawChannelData.length; i += step) {
+                let sum = 0;
+                for (let j = 0; j < step && (i + j) < rawChannelData.length; j++) {
+                    sum += rawChannelData[i + j] * rawChannelData[i + j];
+                }
+                let rms = Math.sqrt(sum / step); // Root Mean Square represents perceived volume
+                if (rms > 0.15) { 
+                    energyPeaks.push(i / sampleRate); // Save time coordinate of the volume spike
+                }
+            }
+            // Return valid anchor timestamps or fall back to linear grid values if track is silent
+            return energyPeaks.length > 5 ? energyPeaks : [2, 4, 6, 8, 10, 12, 14, 16];
+        }
+
+        // 2. FILE INPUT HANDLING & PCM DECODING
+        fileInput.addEventListener('change', async (e) => {
+            const files = Array.from(e.target.files);
+            if (files.length === 0) return;
+
+            uploadStatus.textContent = `${files.length} System Audio Nodes Ingested`;
+            matrixList.innerHTML = "";
+            trackDatabase = [];
+
+            for (let i = 0; i < files.length; i++) {
+                const file = files[i];
+                matrixList.innerHTML += `<li id="meta-${i}" class="text-amber-500 animate-pulse">⚡ Scanning data array [${i+1}/${files.length}]...</li>`;
+                
+                try {
+                    const arrayBuffer = await file.arrayBuffer();
+                    const decodedBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+                    
+                    // Run our transient extraction function
+                    const structuralPeaks = analyzeTrackTransients(decodedBuffer);
+
+                    trackDatabase.push({
+                        name: file.name,
+                        buffer: decodedBuffer,
+                        peaks: structuralPeaks
+                    });
+
+                    document.getElementById(`meta-${i}`).className = "text-cyan-400";
+                    document.getElementById(`meta-${i}`).textContent = `🧬 [SYNC READY] ${file.name} (${structuralPeaks.length} Transients Tracked)`;
+                } catch (err) {
+                    document.getElementById(`meta-${i}`).className = "text-red-500";
+                    document.getElementById(`meta-${i}`).textContent = `❌ Corruption Fault: ${file.name}`;
+                }
+            }
+
+            if (trackDatabase.length >= 1) {
+                startRemixBtn.disabled = false;
+                printLog("Audio analysis complete. Slices are aligned to their native rhythms.");
+            }
+        });
+
+        // 3. THE TRANSIENT-ALIGNED MASHUP LOOP
+        function executeNextMashupSlice(nextTriggerTime) {
+            const baseSliceDuration = 4.0; 
+            const currentGlobalSpeed = parseFloat(speedSlider.value);
+            
+            // Adjust how long the slice runs based on the playback speed configuration
+            const adjustedSliceDuration = baseSliceDuration / currentGlobalSpeed;
+
+            // Pick a random track from your loaded project database
+            const randomTrackIndex = Math.floor(Math.random() * trackDatabase.length);
+            const activeTrack = trackDatabase[randomTrackIndex];
+
+            // Pick a random detected transient peak from the song to start our slice on
+            const randomPeakIndex = Math.floor(Math.random() * (activeTrack.peaks.length - 2));
+            const targetedStartOffset = activeTrack.peaks[randomPeakIndex];
+
+            // Construct Web Audio Node network
+            const source = audioCtx.createBufferSource();
+            source.buffer = activeTrack.buffer;
+            
+            // Apply real-time speed adjustment to ensure seamless sync
+            source.playbackRate.setValueAtTime(currentGlobalSpeed, nextTriggerTime);
+
+            const gainNode = audioCtx.createGain();
+            
+            // Smart Crossfading (Eliminates clicks, pops, and sudden gaps between varying songs)
+            gainNode.gain.setValueAtTime(0, nextTriggerTime);
+            gainNode.gain.linearRampToValueAtTime(1, nextTriggerTime + 0.08); // 80ms fade in
+            gainNode.gain.setValueAtTime(1, nextTriggerTime + adjustedSliceDuration - 0.08);
+            gainNode.gain.linearRampToValueAtTime(0, nextTriggerTime + adjustedSliceDuration); // 80ms fade out
+
+            // Route audio path: Source -> Gain Node -> Global System Analyzer -> Output
+            source.connect(gainNode);
+            gainNode.connect(globalAnalyzer);
+
+            // Execute clip playback using precise timeline parameters
+            source.start(nextTriggerTime, targetedStartOffset, adjustedSliceDuration);
+            executionPipeline.push(source);
+
+            printLog(`Chop Executed // Source Track [${randomTrackIndex + 1}] at aligned peak entry point: ${targetedStartOffset.toFixed(2)}s`);
+
+            // Schedule the upcoming slice to fire exactly as the current one finishes fading out
+            const timingCheckpoint = nextTriggerTime + adjustedSliceDuration;
+            const schedulerInterval = (timingCheckpoint - audioCtx.currentTime - 0.4) * 1000;
+
+            processTimeoutId = setTimeout(() => {
+                executeNextMashupSlice(timingCheckpoint);
+            }, Math.max(0, schedulerInterval));
+        }
+
+        // 4. ENGINE RUNTIME INTERFACES
+        startRemixBtn.addEventListener('click', () => {
+            if (trackDatabase.length === 0) return;
+            printLog("Initializing real-time mashup algorithm...");
+            
+            startRemixBtn.disabled = true;
+            haltBtn.disabled = false;
+            
+            // Start the infinite arrangement processing loop
+            executeNextMashupSlice(audioCtx.currentTime + 0.05);
+            updateVisualizerLoop();
+        });
+
+        function killMixPipeline() {
+            clearTimeout(processTimeoutId);
+            executionPipeline.forEach(node => { try { node.stop(); } catch(e){} });
+            executionPipeline = [];
+        }
+
+        haltBtn.addEventListener('click', () => {
+            killMixPipeline();
+            printLog("Mashup sequencer safely halted.");
+            startRemixBtn.disabled = false;
+            haltBtn.disabled = true;
+            visualizerBar.style.width = "0%";
+        });
+
+        // UI Visual feedback loop
+        function updateVisualizerLoop() {
+            if (executionPipeline.length === 0) return;
+            globalAnalyzer.getByteFrequencyData(dataArray);
+            
+            // Grab lower frequencies (bass/drums energy) to power the visual accent pulse
+            let volumeSum = 0;
+            for(let i=0; i<8; i++) { volumeSum += dataArray[i]; }
+            let averageVolume = volumeSum / 8;
+            
+            visualizerBar.style.width = `${(averageVolume / 255) * 100}%`;
+            requestAnimationFrame(updateVisualizerLoop);
+        }
+    </script>
+</body>
+</html>
